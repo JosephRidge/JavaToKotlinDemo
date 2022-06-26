@@ -1,202 +1,188 @@
-package com.sriyank.javatokotlindemo.activities;
+package com.sriyank.javatokotlindemo.activities
 
-import android.content.Intent;
-import android.os.Bundle;
-import android.util.Log;
-import android.view.MenuItem;
+import androidx.appcompat.app.AppCompatActivity
+import com.google.android.material.navigation.NavigationView
+import com.sriyank.javatokotlindemo.adapters.DisplayAdapter
+import com.sriyank.javatokotlindemo.retrofit.GithubAPIService
+import android.os.Bundle
+import com.sriyank.javatokotlindemo.R
+import androidx.recyclerview.widget.LinearLayoutManager
+import com.sriyank.javatokotlindemo.retrofit.RetrofitClient
+import androidx.appcompat.app.ActionBarDrawerToggle
+import android.util.Log
+import android.view.MenuItem
+import com.sriyank.javatokotlindemo.models.SearchResponse
+import androidx.core.view.GravityCompat
+import com.sriyank.javatokotlindemo.app.Constants
+import com.sriyank.javatokotlindemo.app.Util
+import com.sriyank.javatokotlindemo.models.Repository
+import io.realm.Realm
+import kotlinx.android.synthetic.main.activity_display.*
+import kotlinx.android.synthetic.main.header.view.*
+import retrofit2.Call
+import retrofit2.Callback
+import retrofit2.Response
+import java.util.*
 
-import androidx.annotation.NonNull;
-import androidx.appcompat.app.ActionBarDrawerToggle;
-import androidx.appcompat.app.AppCompatActivity;
-import androidx.appcompat.widget.Toolbar;
-import androidx.core.view.GravityCompat;
-import androidx.drawerlayout.widget.DrawerLayout;
-import androidx.recyclerview.widget.LinearLayoutManager;
-import androidx.recyclerview.widget.RecyclerView;
-
-import com.google.android.material.navigation.NavigationView;
-import com.sriyank.javatokotlindemo.R;
-import com.sriyank.javatokotlindemo.adapters.DisplayAdapter;
-import com.sriyank.javatokotlindemo.app.Constants;
-import com.sriyank.javatokotlindemo.app.Util;
-import com.sriyank.javatokotlindemo.models.Repository;
-import com.sriyank.javatokotlindemo.models.SearchResponse;
-import com.sriyank.javatokotlindemo.retrofit.GithubAPIService;
-import com.sriyank.javatokotlindemo.retrofit.RetrofitClient;
-
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
-import io.realm.Realm;
-import io.realm.RealmResults;
-import retrofit2.Call;
-import retrofit2.Callback;
-import retrofit2.Response;
+class DisplayActivity : AppCompatActivity(), NavigationView.OnNavigationItemSelectedListener {
 
 
-public class DisplayActivity extends AppCompatActivity implements NavigationView.OnNavigationItemSelectedListener {
+    private lateinit var displayAdapter: DisplayAdapter
+    private var browsedRepositories: List<Repository> = mutableListOf()
+    private val githubAPIService: GithubAPIService by lazy{
+        RetrofitClient.getGithubAPIService()
+    }
+    private var realm1: Realm? = null
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_display)
+        setSupportActionBar(toolbar)
+        supportActionBar!!.setTitle("Showing Browsed Results")
 
-	private static final String TAG = DisplayActivity.class.getSimpleName();
+        setUpUserName()
+        val layoutManager = LinearLayoutManager(this)
+        layoutManager.orientation = LinearLayoutManager.VERTICAL
+        recyclerView.setLayoutManager(layoutManager)
+        realm1 = Realm.getDefaultInstance()
+        val navigationView = findViewById<NavigationView>(R.id.nav_view)
+        navigationView.setNavigationItemSelectedListener(this)
+        val drawerToggle = ActionBarDrawerToggle(
+            this,
+            drawer_layout,
+            toolbar,
+            R.string.drawer_open,
+            R.string.drawer_close
+        )
+        drawer_layout.addDrawerListener(drawerToggle)
+        drawerToggle.syncState()
+        val intent = intent
+        if (intent.getIntExtra(Constants.KEY_QUERY_TYPE, -1) == Constants.SEARCH_BY_REPO) {
+            val queryRepo = intent.getStringExtra(Constants.KEY_REPO_SEARCH)
+            val repoLanguage = intent.getStringExtra(Constants.KEY_LANGUAGE)
+            fetchRepositories(queryRepo, repoLanguage)
+        } else {
+            val githubUser = intent.getStringExtra(Constants.KEY_GITHUB_USER)
+            fetchUserRepositories(githubUser)
+        }
+    }
 
-	private DrawerLayout mDrawerLayout;
-	private RecyclerView mRecyclerView;
-	private DisplayAdapter mDisplayAdapter;
-	private List<Repository> browsedRepositories;
-	private GithubAPIService mService;
-	private Realm mRealm;
+    /*
+    * retreive user name
+    * */
+    private fun setUpUserName() {
+        val sp  = getSharedPreferences(Constants.APP_SHARED_PREFERENCES, MODE_PRIVATE)
+        val name = sp.getString(Constants.KEY_PERSON_NAME, "default")
+        val headerView =  nav_view.getHeaderView(0)
+        headerView.txvName.text = name
+    }
 
-	@Override
-	protected void onCreate(Bundle savedInstanceState) {
-		super.onCreate(savedInstanceState);
-		setContentView(R.layout.activity_display);
+    private fun fetchUserRepositories(githubUser: String?) {
+        githubAPIService.searchRepositoriesByUser(githubUser)
+            .enqueue(object : Callback<List<Repository>> {
+                override fun onResponse(
+                    call: Call<List<Repository>>,
+                    response: Response<List<Repository>>
+                ) {
+                    if (response.isSuccessful) {
+                        Log.i(TAG, "posts loaded from API $response")
+                        response.body() ?.let{
+                            browsedRepositories = it
+                        }
 
-		Toolbar toolbar = findViewById(R.id.toolbar);
-		setSupportActionBar(toolbar);
-		getSupportActionBar().setTitle("Showing Browsed Results");
+                        if (browsedRepositories != null && browsedRepositories.isNotEmpty()) setupRecyclerView(
+                            browsedRepositories
+                        ) else Util.showMessage(this@DisplayActivity, "No Items Found")
+                    } else {
+                        Log.i(TAG, "Error $response")
+                        Util.showErrorMessage(this@DisplayActivity, response.errorBody())
+                    }
+                }
 
-		mRecyclerView = findViewById(R.id.recyclerView);
-		LinearLayoutManager layoutManager = new LinearLayoutManager(this);
-		layoutManager.setOrientation(LinearLayoutManager.VERTICAL);
-		mRecyclerView.setLayoutManager(layoutManager);
+                override fun onFailure(call: Call<List<Repository>>, t: Throwable) {
+                    Util.showMessage(this@DisplayActivity, t.message)
+                }
+            })
+    }
 
-		mService = RetrofitClient.getGithubAPIService();
-		mRealm = Realm.getDefaultInstance();
+    private fun fetchRepositories(queryRepo: String?, repoLanguage: String?) {
+        var queryRepo = queryRepo
+        val query: MutableMap<String, String?> = HashMap()
+        if (repoLanguage != null && !repoLanguage.isEmpty()) queryRepo += " language:$repoLanguage"
+        query.put("q", queryRepo)
+        githubAPIService.searchRepositories(query).enqueue(object : Callback<SearchResponse> {
+            override fun onResponse(
+                call: Call<SearchResponse>,
+                response: Response<SearchResponse>
+            ) {
+                if (response.isSuccessful) {
+                    Log.i(TAG, "posts loaded from API $response")
+                    response.body()?.let{
+                        browsedRepositories = it.items
 
-		NavigationView navigationView = findViewById(R.id.nav_view);
-		navigationView.setNavigationItemSelectedListener(this);
+                    }
+//                    browsedRepositories = response.body()!!.items
+                    if ((browsedRepositories as MutableList<*>?)!!.size > 0) setupRecyclerView(browsedRepositories) else Util.showMessage(
+                        this@DisplayActivity,
+                        "No Items Found"
+                    )
+                } else {
+                    Log.i(TAG, "error $response")
+                    Util.showErrorMessage(this@DisplayActivity, response.errorBody())
+                }
+            }
 
-		mDrawerLayout = findViewById(R.id.drawer_layout);
-		ActionBarDrawerToggle drawerToggle
-				= new ActionBarDrawerToggle(this, mDrawerLayout, toolbar, R.string.drawer_open, R.string.drawer_close);
-		mDrawerLayout.addDrawerListener(drawerToggle);
-		drawerToggle.syncState();
+            override fun onFailure(call: Call<SearchResponse>, t: Throwable) {
+                Util.showMessage(this@DisplayActivity, t.toString())
+            }
+        })
+    }
 
-		Intent intent = getIntent();
-		if (intent.getIntExtra(Constants.KEY_QUERY_TYPE, -1) == Constants.SEARCH_BY_REPO) {
-			String queryRepo = intent.getStringExtra(Constants.KEY_REPO_SEARCH);
-			String repoLanguage = intent.getStringExtra(Constants.KEY_LANGUAGE);
-			fetchRepositories(queryRepo, repoLanguage);
-		} else {
-			String githubUser = intent.getStringExtra(Constants.KEY_GITHUB_USER);
-			fetchUserRepositories(githubUser);
-		}
-	}
+    private fun setupRecyclerView(items: List<Repository>) {
+        displayAdapter = DisplayAdapter(this, items)
+        recyclerView!!.adapter = displayAdapter
+    }
 
-	private void fetchUserRepositories(String githubUser) {
+    override fun onNavigationItemSelected(menuItem: MenuItem): Boolean {
+        menuItem.isChecked = true
+        closeDrawer()
+        when (menuItem.itemId) {
+            R.id.item_bookmark -> {
+                showBookmarks()
+                supportActionBar!!.title = "Showing Bookmarks"
+            }
+            R.id.item_browsed_results -> {
+                showBrowsedResults()
+                supportActionBar!!.title = "Showing Browsed Results"
+            }
+        }
+        return true
+    }
 
-		mService.searchRepositoriesByUser(githubUser).enqueue(new Callback<List<Repository>>() {
-			@Override
-			public void onResponse(@NonNull Call<List<Repository>> call, Response<List<Repository>> response) {
-				if (response.isSuccessful()) {
-					Log.i(TAG, "posts loaded from API " + response);
+    private fun showBrowsedResults() {
+        displayAdapter.swap(browsedRepositories)
+    }
 
-					browsedRepositories = response.body();
+    private fun showBookmarks() {
+        realm1!!.executeTransaction { realm ->
+            val repositories = realm.where<Repository>(
+                Repository::class.java
+            ).findAll()
+            displayAdapter.swap(repositories)
+        }
+    }
 
-					if (browsedRepositories != null && browsedRepositories.size() > 0)
-						setupRecyclerView(browsedRepositories);
-					else
-						Util.showMessage(DisplayActivity.this, "No Items Found");
+    private fun closeDrawer() {
+        drawer_layout!!.closeDrawer(GravityCompat.START)
+    }
 
-				} else {
-					Log.i(TAG, "Error " + response);
-					Util.showErrorMessage(DisplayActivity.this, response.errorBody());
-				}
-			}
+    override fun onBackPressed() {
+        if (drawer_layout!!.isDrawerOpen(GravityCompat.START)) closeDrawer() else {
+            super.onBackPressed()
+            realm1!!.close()
+        }
+    }
 
-			@Override
-			public void onFailure(Call<List<Repository>> call, Throwable t) {
-				Util.showMessage(DisplayActivity.this, t.getMessage());
-			}
-		});
-	}
-
-	private void fetchRepositories(String queryRepo, String repoLanguage) {
-
-		Map<String, String> query = new HashMap<>();
-
-		if (repoLanguage != null && !repoLanguage.isEmpty())
-			queryRepo += " language:" + repoLanguage;
-		query.put("q", queryRepo);
-
-		mService.searchRepositories(query).enqueue(new Callback<SearchResponse>() {
-			@Override
-			public void onResponse(Call<SearchResponse> call, Response<SearchResponse> response) {
-				if (response.isSuccessful()) {
-					Log.i(TAG, "posts loaded from API " + response);
-
-					browsedRepositories = response.body().getItems();
-
-					if (browsedRepositories.size() > 0)
-						setupRecyclerView(browsedRepositories);
-					else
-						Util.showMessage(DisplayActivity.this, "No Items Found");
-
-				} else {
-					Log.i(TAG, "error " + response);
-					Util.showErrorMessage(DisplayActivity.this, response.errorBody());
-				}
-			}
-
-			@Override
-			public void onFailure(Call<SearchResponse> call, Throwable t) {
-				Util.showMessage(DisplayActivity.this, t.toString());
-			}
-		});
-	}
-
-	private void setupRecyclerView(List<Repository> items) {
-		mDisplayAdapter = new DisplayAdapter(this, items);
-		mRecyclerView.setAdapter(mDisplayAdapter);
-	}
-
-	@Override
-	public boolean onNavigationItemSelected(@NonNull MenuItem menuItem) {
-
-		menuItem.setChecked(true);
-		closeDrawer();
-
-		switch (menuItem.getItemId()) {
-
-			case R.id.item_bookmark:
-				showBookmarks();
-				getSupportActionBar().setTitle("Showing Bookmarks");
-				break;
-
-			case R.id.item_browsed_results:
-				showBrowsedResults();
-				getSupportActionBar().setTitle("Showing Browsed Results");
-				break;
-		}
-
-		return true;
-	}
-
-	private void showBrowsedResults() {
-		mDisplayAdapter.swap(browsedRepositories);
-	}
-
-	private void showBookmarks() {
-		mRealm.executeTransaction(new Realm.Transaction() {
-			@Override
-			public void execute(Realm realm) {
-				RealmResults<Repository> repositories = realm.where(Repository.class).findAll();
-				mDisplayAdapter.swap(repositories);
-			}
-		});
-	}
-
-	private void closeDrawer() {
-		mDrawerLayout.closeDrawer(GravityCompat.START);
-	}
-
-	@Override
-	public void onBackPressed() {
-		if (mDrawerLayout.isDrawerOpen(GravityCompat.START))
-			closeDrawer();
-		else {
-			super.onBackPressed();
-			mRealm.close();
-		}
-	}
+    companion object {
+        private val TAG: String = DisplayActivity::class.java.getSimpleName()
+    }
 }

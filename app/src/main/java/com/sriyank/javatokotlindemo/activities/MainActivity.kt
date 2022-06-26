@@ -1,5 +1,6 @@
 package com.sriyank.javatokotlindemo.activities
 
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.view.View
@@ -25,7 +26,13 @@ class MainActivity : AppCompatActivity() {
 
     /** Save app username in SharedPreferences  */
     fun saveName(view: View) {
-
+        if (isNotEmpty(etName, inputLayoutName)) {
+        val userName = etName.text.toString()
+        val sp =getSharedPreferences(Constants.APP_SHARED_PREFERENCES, Context.MODE_PRIVATE)
+        val editor = sp.edit()
+        editor.putString(Constants.KEY_PERSON_NAME,userName)
+        editor.apply()
+    }
     }
 
     /** Search repositories on github after passing data to DisplayActivity */
